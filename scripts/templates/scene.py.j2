@@ -20,6 +20,8 @@ def _apply_style(mobj, style):
         return mobj
     fs = style.get("font_size")
     color = style.get("color")
+    weight = style.get("weight")
+    
     if fs:
         try:
             if hasattr(mobj, "font_size"):
@@ -41,22 +43,71 @@ def _make_mobject(obj_def):
     style = obj_def.get("style", {}) or {}
     pos = obj_def.get("position", {}) or {}
 
+    m = None
+
     if typ in ("mathtex","mathex","equation","tex"):
-        m = MathTex(txt, font_size=style.get("font_size", 36))
+        m = MathTex(txt, font_size=style.get("font_size", 48))
     elif typ in ("text","textslide","text_slide","final_text"):
         m = Text(txt, font_size=style.get("font_size", 36))
     elif typ in ("circle","dot"):
-        r = obj_def.get("radius", 1)
-        circle = Circle(radius=r)
+        r = obj_def.get("radius", 1.0)
+        m = Circle(radius=r)
         if txt:
-            label = Text(txt, font_size=style.get("font_size", 24)).next_to(circle, DOWN)
-            m = VGroup(circle, label)
-        else:
-            m = circle
-    elif typ in ("line",):
+            label = Text(txt, font_size=24).next_to(m, DOWN)
+            m = VGroup(m, label)
+    elif typ in ("square", "box"):
+        side = obj_def.get("width", 2.0)
+        m = Square(side_length=side)
+        if txt:
+            label = Text(txt, font_size=24).move_to(m.get_center())
+            m = VGroup(m, label)
+    elif typ in ("rectangle", "rect"):
+        w = obj_def.get("width", 4.0)
+        h = obj_def.get("height", 2.0)
+        m = Rectangle(width=w, height=h)
+        if txt:
+            label = Text(txt, font_size=24).move_to(m.get_center())
+            m = VGroup(m, label)
+    elif typ in ("line", "arrow"):
         p1 = obj_def.get("p1", {"x": -1, "y": 0})
         p2 = obj_def.get("p2", {"x": 1, "y": 0})
-        m = Line(_vec(p1), _vec(p2))
+        if typ == "arrow":
+            m = Arrow(_vec(p1), _vec(p2), buff=0)
+        else:
+            m = Line(_vec(p1), _vec(p2))
+    elif typ == "sector":
+        r = obj_def.get("radius", 1.0)
+        angle = obj_def.get("angle", 90) * DEGREES
+        start_angle = obj_def.get("start_angle", 0) * DEGREES
+        # Use AnnularSector directly to avoid potential Sector init issues
+        m = AnnularSector(outer_radius=r, inner_radius=0, angle=angle, start_angle=start_angle)
+    elif typ == "arc":
+        r = obj_def.get("radius", 1.0)
+        angle = obj_def.get("angle", 90) * DEGREES
+        start_angle = obj_def.get("start_angle", 0) * DEGREES
+        m = Arc(radius=r, angle=angle, start_angle=start_angle)
+    elif typ == "brace":
+        # Brace requires a target object, but here we can just define it by points or width
+        # Simplified: Brace between two points (if p1/p2 provided) or just a generic brace
+        p1 = obj_def.get("p1")
+        p2 = obj_def.get("p2")
+        if p1 and p2:
+            line = Line(_vec(p1), _vec(p2))
+            m = Brace(line)
+        else:
+            w = obj_def.get("width", 2.0)
+            line = Line(LEFT * w/2, RIGHT * w/2)
+            m = Brace(line)
+        if txt:
+            label = m.get_text(txt)
+            m = VGroup(m, label)
+    elif typ == "polygon":
+        points = obj_def.get("points", [])
+        if points:
+            vertices = [_vec(p) for p in points]
+            m = Polygon(*vertices)
+        else:
+            m = RegularPolygon(n=obj_def.get("sides", 5))
     elif typ in ("graph","draw_graph","plot","axes"):
         meta = obj_def.get("meta", {}) or {}
         x_range = meta.get("x_range", [-5,5,1])
@@ -75,59 +126,74 @@ def _make_mobject(obj_def):
         else:
             m = axes
     else:
-        if ("\\" in txt) or ("^" in txt) or ("{" in txt):
-            m = MathTex(txt, font_size=style.get("font_size", 36))
-        else:
-            m = Text(txt, font_size=style.get("font_size", 36))
+        m = Text(txt or typ, font_size=style.get("font_size", 24))
 
     _apply_style(m, style)
     m.move_to(_vec(pos))
     return m
 
 class GeneratedScene(Scene):
-    """Auto-generated scene. Plays scenes in DSL order."""
+    """Auto-generated scene with object persistence."""
     def construct(self):
         data = _SCENE_JSON
         scenes = data.get("scenes", [])
 
+        # State tracking: id -> mobject
+        self.state = {}
+
         for idx, sc in enumerate(scenes):
-            sc_type = (sc.get("type") or "").lower()
-            duration = sc.get("duration", 3)
-            objects = sc.get("objects", []) or []
+            duration = sc.get("duration", 2)
+            objects_def = sc.get("objects", []) or []
+            
+            # Identify current scene IDs
+            current_ids = set()
+            new_mobjects = []
+            animations = []
 
-            mobjects = []
-            for obj in objects:
-                try:
-                    mobj = _make_mobject(obj)
-                    mobjects.append(mobj)
-                except Exception as e:
-                    err = Text(f"Object error: {str(e)}", font_size=24)
-                    mobjects.append(err)
+            for obj_def in objects_def:
+                oid = obj_def.get("id")
+                # If no ID, generate a temporary one (no persistence)
+                if not oid:
+                    oid = f"temp_{idx}_{len(new_mobjects)}"
+                
+                current_ids.add(oid)
 
-            if sc_type == "highlight" and mobjects:
-                self.play(Write(mobjects[0]))
-                rect = SurroundingRectangle(mobjects[0], buff=0.2)
-                color = objects[0].get("style", {}).get("color")
-                if color:
-                    try:
-                        rect.set_color(color)
-                    except Exception:
-                        pass
-                self.play(Create(rect))
-                self.wait(duration)
-                self.play(FadeOut(rect), FadeOut(mobjects[0]))
-                continue
+                # Create the target mobject configuration
+                target_mobj = _make_mobject(obj_def)
 
-            if mobjects:
-                try:
-                    self.play(*[Write(m) for m in mobjects])
-                except Exception:
-                    self.play(*[FadeIn(m) for m in mobjects])
-                self.wait(duration)
-                try:
-                    self.play(*[FadeOut(m) for m in mobjects])
-                except Exception:
-                    for m in mobjects:
-                        self.remove(m)
-            else:
-                self.wait(duration)
+                if oid in self.state:
+                    # Object exists: Transform it to new state
+                    existing_mobj = self.state[oid]
+                    animations.append(Transform(existing_mobj, target_mobj))
+                else:
+                    # New object: Create it
+                    self.state[oid] = target_mobj
+                    anim_type = obj_def.get("animation", "Write")
+                    if anim_type == "FadeIn":
+                        animations.append(FadeIn(target_mobj))
+                    elif anim_type == "GrowFromCenter":
+                        animations.append(GrowFromCenter(target_mobj))
+                    elif anim_type == "DrawBorderThenFill":
+                        animations.append(DrawBorderThenFill(target_mobj))
+                    elif anim_type == "Create":
+                        animations.append(Create(target_mobj))
+                    else:
+                        animations.append(Write(target_mobj))
+
+            # Identify objects to remove (in state but not in current scene)
+            to_remove = []
+            for oid in list(self.state.keys()):
+                if oid not in current_ids:
+                    mobj = self.state[oid]
+                    animations.append(FadeOut(mobj))
+                    to_remove.append(oid)
+            
+            # Cleanup removed objects from state
+            for oid in to_remove:
+                del self.state[oid]
+
+            # Play all animations (Transform, Create, FadeOut) simultaneously
+            if animations:
+                self.play(*animations)
+            
+            self.wait(duration)

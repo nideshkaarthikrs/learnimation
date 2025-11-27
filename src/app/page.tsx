@@ -81,33 +81,12 @@ export default function Home() {
     setStatus(null);
     setJobId(null);
 
-    // Simple DSL created client-side from the input text
-    const dsl = {
-      title: "Generated from Learnimation",
-      width: 1280,
-      height: 720,
-      fps: 30,
-      scenes: [
-        {
-          type: "text_slide",
-          duration: 3,
-          objects: [
-            {
-              type: "text",
-              text: inputText,
-              position: { x: 0, y: 0 },
-              style: { font_size: 38, color: "#ffffff" },
-            },
-          ],
-        },
-      ],
-    };
-
     try {
+      // Send raw text to backend (OpenAI will handle DSL generation)
       const resp = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(dsl),
+        body: JSON.stringify({ text: inputText }),
       });
 
       const json = await resp.json();
@@ -119,6 +98,9 @@ export default function Home() {
       }
 
       const jid = json.jobId;
+      if (json.dsl) {
+        console.log("Generated DSL from Server:", json.dsl);
+      }
       setJobId(jid);
 
       // start polling status
@@ -361,7 +343,7 @@ export default function Home() {
             <div className="mt-6 animate-bounce-in">
               <h3 className="text-lg font-semibold mb-2 text-cyan-300">✨ Video Generated!</h3>
               <div className="relative rounded-xl overflow-hidden border border-slate-700 shadow-2xl">
-                <video src={videoUrl} controls width="100%" className="bg-black" />
+                <video src={videoUrl} controls autoPlay playsInline width="100%" className="bg-black" />
               </div>
               <div className="mt-3 text-center">
                 <a
