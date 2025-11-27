@@ -45,7 +45,7 @@ export default function Home() {
           <button
             onClick={handleGenerateVideo}
             disabled={isLoading || !inputText.trim()}
-            className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 disabled:hover:scale-100"
+            className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 transform hover:scale-105 active:translate-y-1 active:scale-95 hover:cursor-pointer disabled:cursor-not-allowed hover:shadow-[0_8px_30px_rgba(99,102,241,0.22)] disabled:hover:shadow-none focus:outline-none"
           >
             {isLoading ? (
               <span className="flex items-center justify-center">
