@@ -35,18 +35,38 @@ export default function Home() {
     setCharCount(v.length);
   };
 
-  const handleGenerateVideo = async () => {
-    if (!inputText.trim()) return;
-    setIsLoading(true);
-    try {
-      await new Promise((res) => setTimeout(res, 1400));
-      console.log('Video generation simulated for text length:', inputText.length);
-    } catch (err) {
-      console.error('Generation error', err);
-    } finally {
-      setIsLoading(false);
+const handleGenerateVideo = async () => {
+  if (!inputText.trim()) return;
+  setIsLoading(true);
+  try {
+    const res = await fetch("/api/generate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: inputText }),
+    });
+    const json = await res.json();
+    if (!res.ok) {
+      console.error("Generation failed:", json);
+      alert("Generation failed: " + (json?.error ?? "unknown"));
+      return;
     }
-  };
+    if (json?.dsl) {
+      console.log("DSL:", json.dsl);
+      // TODO: send this DSL to your Manim-generation backend or save it
+      // For now, show a quick preview to user (or open a modal with JSON)
+      alert("DSL generated! Check console for details.");
+    } else {
+      console.error("Unexpected response:", json);
+      alert("Unexpected response from server");
+    }
+  } catch (err) {
+    console.error("Error:", err);
+    alert("Network or server error");
+  } finally {
+    setIsLoading(false);
+  }
+};
+
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-black text-slate-100">
