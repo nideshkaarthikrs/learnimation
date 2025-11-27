@@ -1,0 +1,133 @@
+{# scripts/templates/scene.py.j2
+   Template for generating a Manim python file from scene_json.
+   Requires env.filters["tojson"] = lambda val: json.dumps(val, ensure_ascii=False)
+#}
+
+from manim import *
+import json
+import numpy as np
+
+# Embedded scene JSON (safe-encoded)
+_SCENE_JSON = json.loads(r'''{{ scene_json | tojson }}''')
+
+def _vec(pos):
+    if not pos or not isinstance(pos, dict):
+        return ORIGIN
+    return np.array([pos.get("x", 0), pos.get("y", 0), 0])
+
+def _apply_style(mobj, style):
+    if not style:
+        return mobj
+    fs = style.get("font_size")
+    color = style.get("color")
+    if fs:
+        try:
+            if hasattr(mobj, "font_size"):
+                mobj.font_size = fs
+            else:
+                mobj.set(font_size=fs)
+        except Exception:
+            pass
+    if color:
+        try:
+            mobj.set_color(color)
+        except Exception:
+            pass
+    return mobj
+
+def _make_mobject(obj_def):
+    typ = (obj_def.get("type") or "Text").lower()
+    txt = obj_def.get("text", "") or ""
+    style = obj_def.get("style", {}) or {}
+    pos = obj_def.get("position", {}) or {}
+
+    if typ in ("mathtex","mathex","equation","tex"):
+        m = MathTex(txt, font_size=style.get("font_size", 36))
+    elif typ in ("text","textslide","text_slide","final_text"):
+        m = Text(txt, font_size=style.get("font_size", 36))
+    elif typ in ("circle","dot"):
+        r = obj_def.get("radius", 1)
+        circle = Circle(radius=r)
+        if txt:
+            label = Text(txt, font_size=style.get("font_size", 24)).next_to(circle, DOWN)
+            m = VGroup(circle, label)
+        else:
+            m = circle
+    elif typ in ("line",):
+        p1 = obj_def.get("p1", {"x": -1, "y": 0})
+        p2 = obj_def.get("p2", {"x": 1, "y": 0})
+        m = Line(_vec(p1), _vec(p2))
+    elif typ in ("graph","draw_graph","plot","axes"):
+        meta = obj_def.get("meta", {}) or {}
+        x_range = meta.get("x_range", [-5,5,1])
+        y_range = meta.get("y_range", [-3,3,1])
+        x_len = meta.get("x_length", 6)
+        y_len = meta.get("y_length", 4)
+        axes = Axes(x_range=x_range, y_range=y_range, x_length=x_len, y_length=y_len)
+        func = obj_def.get("graph", {}).get("function")
+        if func:
+            try:
+                fn = eval(func, {"np": __import__("numpy")})
+                graph = axes.plot(fn, x_range=(x_range[0], x_range[1]))
+                m = VGroup(axes, graph)
+            except Exception:
+                m = axes
+        else:
+            m = axes
+    else:
+        if ("\\" in txt) or ("^" in txt) or ("{" in txt):
+            m = MathTex(txt, font_size=style.get("font_size", 36))
+        else:
+            m = Text(txt, font_size=style.get("font_size", 36))
+
+    _apply_style(m, style)
+    m.move_to(_vec(pos))
+    return m
+
+class GeneratedScene(Scene):
+    """Auto-generated scene. Plays scenes in DSL order."""
+    def construct(self):
+        data = _SCENE_JSON
+        scenes = data.get("scenes", [])
+
+        for idx, sc in enumerate(scenes):
+            sc_type = (sc.get("type") or "").lower()
+            duration = sc.get("duration", 3)
+            objects = sc.get("objects", []) or []
+
+            mobjects = []
+            for obj in objects:
+                try:
+                    mobj = _make_mobject(obj)
+                    mobjects.append(mobj)
+                except Exception as e:
+                    err = Text(f"Object error: {str(e)}", font_size=24)
+                    mobjects.append(err)
+
+            if sc_type == "highlight" and mobjects:
+                self.play(Write(mobjects[0]))
+                rect = SurroundingRectangle(mobjects[0], buff=0.2)
+                color = objects[0].get("style", {}).get("color")
+                if color:
+                    try:
+                        rect.set_color(color)
+                    except Exception:
+                        pass
+                self.play(Create(rect))
+                self.wait(duration)
+                self.play(FadeOut(rect), FadeOut(mobjects[0]))
+                continue
+
+            if mobjects:
+                try:
+                    self.play(*[Write(m) for m in mobjects])
+                except Exception:
+                    self.play(*[FadeIn(m) for m in mobjects])
+                self.wait(duration)
+                try:
+                    self.play(*[FadeOut(m) for m in mobjects])
+                except Exception:
+                    for m in mobjects:
+                        self.remove(m)
+            else:
+                self.wait(duration)

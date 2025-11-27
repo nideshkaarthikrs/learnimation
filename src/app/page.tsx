@@ -1,5 +1,5 @@
-'use client';
-import { useState, useEffect, type ChangeEvent } from 'react';
+"use client";
+import { useState, useEffect, type ChangeEvent } from "react";
 
 type Particle = {
   id: number;
@@ -12,10 +12,15 @@ type Particle = {
 
 export default function Home() {
   const MAX_CHARS = 500;
-  const [inputText, setInputText] = useState('');
+  const [inputText, setInputText] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [particles, setParticles] = useState<Particle[]>([]);
   const [charCount, setCharCount] = useState(0);
+
+  // NEW states for job tracking
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [status, setStatus] = useState<any>(null);
+  const [videoUrl, setVideoUrl] = useState<string | null>(null);
 
   useEffect(() => {
     const newParticles: Particle[] = Array.from({ length: 30 }, (_, i) => ({
@@ -35,38 +40,95 @@ export default function Home() {
     setCharCount(v.length);
   };
 
-const handleGenerateVideo = async () => {
-  if (!inputText.trim()) return;
-  setIsLoading(true);
-  try {
-    const res = await fetch("/api/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: inputText }),
-    });
-    const json = await res.json();
-    if (!res.ok) {
-      console.error("Generation failed:", json);
-      alert("Generation failed: " + (json?.error ?? "unknown"));
-      return;
-    }
-    if (json?.dsl) {
-      console.log("DSL:", json.dsl);
-      // TODO: send this DSL to your Manim-generation backend or save it
-      // For now, show a quick preview to user (or open a modal with JSON)
-      alert("DSL generated! Check console for details.");
-    } else {
-      console.error("Unexpected response:", json);
-      alert("Unexpected response from server");
-    }
-  } catch (err) {
-    console.error("Error:", err);
-    alert("Network or server error");
-  } finally {
-    setIsLoading(false);
-  }
-};
+  // ---------------------------
+  // POLLING FUNCTION
+  // ---------------------------
+  async function waitForVideo(jobId: string) {
+    const poll = async () => {
+      try {
+        const r = await fetch(`/api/job-status?jobId=${jobId}`);
+        const s = await r.json();
+        setStatus(s);
 
+        if (!s.done) {
+          // Poll every 1.5s
+          setTimeout(poll, 1500);
+        } else if (s.mp4s && s.mp4s.length > 0) {
+          const url = `/api/download?jobId=${jobId}&file=${encodeURIComponent(
+            s.mp4s[0]
+          )}`;
+          setVideoUrl(url);
+          setIsLoading(false);
+        } else {
+          // done but no mp4 — stop loading and show status
+          setIsLoading(false);
+        }
+      } catch (err) {
+        console.error("Polling error", err);
+        setIsLoading(false);
+      }
+    };
+    poll();
+  }
+
+  // ---------------------------
+  // GENERATE HANDLER
+  // ---------------------------
+  const handleGenerateVideo = async () => {
+    if (!inputText.trim()) return;
+    setIsLoading(true);
+    setVideoUrl(null);
+    setStatus(null);
+    setJobId(null);
+
+    // Simple DSL created client-side from the input text
+    const dsl = {
+      title: "Generated from Learnimation",
+      width: 1280,
+      height: 720,
+      fps: 30,
+      scenes: [
+        {
+          type: "text_slide",
+          duration: 3,
+          objects: [
+            {
+              type: "text",
+              text: inputText,
+              position: { x: 0, y: 0 },
+              style: { font_size: 38, color: "#ffffff" },
+            },
+          ],
+        },
+      ],
+    };
+
+    try {
+      const resp = await fetch("/api/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(dsl),
+      });
+
+      const json = await resp.json();
+      if (!resp.ok) {
+        console.error("Failed to create job:", json);
+        alert("Failed to start rendering: " + (json?.error ?? "unknown"));
+        setIsLoading(false);
+        return;
+      }
+
+      const jid = json.jobId;
+      setJobId(jid);
+
+      // start polling status
+      waitForVideo(jid);
+    } catch (err) {
+      console.error("Network error:", err);
+      alert("Network error while starting rendering");
+      setIsLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen relative overflow-hidden bg-black text-slate-100">
@@ -256,6 +318,63 @@ const handleGenerateVideo = async () => {
             <span className="px-3 py-1 bg-slate-800 text-slate-200 rounded-full text-xs font-semibold">⚡ Fast Generation</span>
             <span className="px-3 py-1 bg-slate-800 text-slate-200 rounded-full text-xs font-semibold">🎨 Cinematic Output</span>
           </div>
+
+          {/* Status / Logs */}
+          {jobId && (
+            <div className="mt-6">
+              <p className="text-sm text-slate-400">Job ID: <strong className="text-slate-100">{jobId}</strong></p>
+            </div>
+          )}
+
+          {/* Progress Bar & Log Preview */}
+          {status && !status.done && (
+            <div className="mt-4 space-y-3">
+              {/* Progress Bar */}
+              <div className="w-full bg-slate-800 rounded-full h-4 overflow-hidden relative">
+                <div
+                  className="bg-gradient-to-r from-cyan-400 to-blue-500 h-full transition-all duration-500 ease-out"
+                  style={{ width: `${status.progress ?? 0}%` }}
+                ></div>
+                {/* Indeterminate shimmer if progress is null/0 */}
+                {(!status.progress || status.progress === 0) && (
+                  <div className="absolute inset-0 animate-shimmer opacity-30 bg-white"></div>
+                )}
+              </div>
+              <div className="flex justify-between text-xs text-slate-400">
+                <span>Rendering...</span>
+                <span>{status.progress ? `${status.progress}%` : "Initializing"}</span>
+              </div>
+
+              {/* Log Preview */}
+              {status.log_preview && (
+                <div className="rounded-lg bg-black/50 border border-slate-800 p-3 font-mono text-xs text-slate-300 overflow-hidden">
+                  <div className="opacity-50 mb-1 text-[10px] uppercase tracking-wider">Log Preview</div>
+                  <pre className="whitespace-pre-wrap break-all max-h-[200px] overflow-y-auto">
+                    {status.log_preview}
+                  </pre>
+                </div>
+              )}
+            </div>
+          )}
+
+          {videoUrl && (
+            <div className="mt-6 animate-bounce-in">
+              <h3 className="text-lg font-semibold mb-2 text-cyan-300">✨ Video Generated!</h3>
+              <div className="relative rounded-xl overflow-hidden border border-slate-700 shadow-2xl">
+                <video src={videoUrl} controls width="100%" className="bg-black" />
+              </div>
+              <div className="mt-3 text-center">
+                <a
+                  href={videoUrl}
+                  download
+                  className="inline-flex items-center gap-2 text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                  Download Video
+                </a>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>
